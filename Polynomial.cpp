@@ -1,109 +1,271 @@
 #include <iostream>
-#include <map>
+#include <sstream>
 #include <cmath>
 using namespace std;
 
-class Polynomial {
+template <class T>
+class ChainNode {
+public:
+    T data;
+    ChainNode<T>* link;
+
+    ChainNode(T d = T(), ChainNode<T>* l = nullptr)
+        : data(d), link(l) {}
+};
+
+template <class T>
+class AvailableList {
+public:
+    static ChainNode<T>* avail;
+
+    static ChainNode<T>* GetNode(const T& d) {
+        if (avail) {
+            ChainNode<T>* node = avail;
+            avail = avail->link;
+            node->data = d;
+            node->link = nullptr;
+            return node;
+        }
+        return new ChainNode<T>(d);
+    }
+
+    static void ReturnNode(ChainNode<T>* node) {
+        node->link = avail;
+        avail = node;
+    }
+};
+
+template <class T>
+ChainNode<T>* AvailableList<T>::avail = nullptr;
+
+template <class T>
+class ChainIterator {
 private:
-    std::map<int, int, std::greater<int>> terms;
+    ChainNode<T>* current;
+
+public:
+    ChainIterator(ChainNode<T>* node = nullptr)
+        : current(node) {}
+
+    T& operator*() const {
+        return current->data;
+    }
+
+    ChainIterator<T>& operator++() {
+        current = current->link;
+        return *this;
+    }
+
+    bool operator!=(const ChainIterator<T>& other) const {
+        return current != other.current;
+    }
+};
+
+template <class T>
+class Chain {
+private:
+    ChainNode<T>* head;
+
+public:
+    using iterator = ChainIterator<T>;
+
+    Chain() {
+        head = new ChainNode<T>();
+        head->link = head;   // circular
+    }
+
+    ~Chain() {
+        Clear();
+        delete head;
+    }
+
+    void Clear() {
+        ChainNode<T>* cur = head->link;
+        while (cur != head) {
+            ChainNode<T>* tmp = cur;
+            cur = cur->link;
+            AvailableList<T>::ReturnNode(tmp);
+        }
+        head->link = head;
+    }
+
+    ChainNode<T>* GetHead() const {
+        return head;
+    }
+
+    iterator Begin() const {
+        return iterator(head->link);
+    }
+
+    iterator End() const {
+        return iterator(head);
+    }
+};
+
+struct Term {
+    int coef;
+    int exp;
+
+    Term(int c = 0, int e = 0) : coef(c), exp(e) {}
+};
+
+
+class Polynomial {
+    friend istream& operator>>(istream&, Polynomial&);
+    friend ostream& operator<<(ostream&, const Polynomial&);
+
+private:
+    Chain<Term> poly;
+
+    void InsertTerm(int coef, int exp) {
+        if (coef == 0) return;
+
+        ChainNode<Term>* head = poly.GetHead();
+        ChainNode<Term>* prev = head;
+        ChainNode<Term>* cur = head->link;
+
+ 
+        while (cur != head && cur->data.exp > exp) {
+            prev = cur;
+            cur = cur->link;
+        }
+
+  
+        if (cur != head && cur->data.exp == exp) {
+            cur->data.coef += coef;
+            if (cur->data.coef == 0) {
+                prev->link = cur->link;
+                AvailableList<Term>::ReturnNode(cur);
+            }
+        } else {
+            ChainNode<Term>* node =
+                AvailableList<Term>::GetNode(Term(coef, exp));
+            node->link = cur;
+            prev->link = node;
+        }
+    }
 
 public:
     Polynomial() = default;
 
-    Polynomial(const Polynomial &other) : terms(other.terms) {}
-
-    Polynomial &operator=(const Polynomial &other) {
-        if (this != &other) {
-            terms = other.terms;
-        }
-        return *this;
+    Polynomial(const Polynomial& p) {
+        auto it = p.poly.Begin();
+        auto end = p.poly.End();
+        for (; it != end; ++it)
+            InsertTerm((*it).coef, (*it).exp);
     }
 
     ~Polynomial() = default;
 
-    friend std::istream &operator>>(std::istream &is, Polynomial &poly) {
-        int n;
-        is >> n;
-        for (int i = 0; i < n; ++i) {
-            int coef, exp;
-            is >> coef >> exp;
-            poly.terms[exp] += coef;
-        }
-        return is;
+    Polynomial& operator=(const Polynomial& p) {
+        if (this == &p) return *this;
+        poly.Clear();
+        auto it = p.poly.Begin();
+        auto end = p.poly.End();
+        for (; it != end; ++it)
+            InsertTerm((*it).coef, (*it).exp);
+        return *this;
     }
 
-    friend std::ostream &operator<<(std::ostream &os, const Polynomial &poly) {
-        bool first = true;
-        for (auto it = poly.terms.begin(); it != poly.terms.end(); ++it) {
-            int exp = it->first;
-            int coef = it->second;
-            if (coef == 0) continue;
-            if (!first && coef > 0) os << " + ";
-            if (coef < 0) os << " - " << (coef * -1);
-            else if (first) os << coef;
-            else os << coef;
-
-            if (exp > 0) os << "x";
-            if (exp > 1) os << "^" << exp;
-            first = false;
-        }
-        if (first) os << "0";
-        return os;
+    Polynomial operator+(const Polynomial& b) const {
+        Polynomial c = *this;
+        auto it = b.poly.Begin();
+        auto end = b.poly.End();
+        for (; it != end; ++it)
+            c.InsertTerm((*it).coef, (*it).exp);
+        return c;
     }
 
-    Polynomial operator+(const Polynomial &other) const {
-        Polynomial result = *this;
-        for (auto it = other.terms.begin(); it != other.terms.end(); ++it) {
-            int exp = it->first;
-            int coef = it->second;
-            result.terms[exp] += coef;
-            if (result.terms[exp] == 0) result.terms.erase(exp);
-        }
-        return result;
+    Polynomial operator-(const Polynomial& b) const {
+        Polynomial c = *this;
+        auto it = b.poly.Begin();
+        auto end = b.poly.End();
+        for (; it != end; ++it)
+            c.InsertTerm(-(*it).coef, (*it).exp);
+        return c;
     }
 
-    Polynomial operator-(const Polynomial &other) const {
-        Polynomial result = *this;
-        for (auto it = other.terms.begin(); it != other.terms.end(); ++it) {
-            int exp = it->first;
-            int coef = it->second;
-            result.terms[exp] -= coef;
-            if (result.terms[exp] == 0) result.terms.erase(exp);
-        }
-        return result;
-    }
+    Polynomial operator*(const Polynomial& b) const {
+        Polynomial c;
+        auto it1 = poly.Begin();
+        auto end1 = poly.End();
+        auto end2 = b.poly.End();
 
-    Polynomial operator*(const Polynomial &other) const {
-        Polynomial result;
-        for (auto it1 = terms.begin(); it1 != terms.end(); ++it1) {
-            for (auto it2 = other.terms.begin(); it2 != other.terms.end(); ++it2) {
-                int newExp = it1->first + it2->first;
-                int newCoef = it1->second * it2->second;
-                result.terms[newExp] += newCoef;
-                if (result.terms[newExp] == 0) result.terms.erase(newExp);
+        for (; it1 != end1; ++it1) {
+            auto it2 = b.poly.Begin();
+            for (; it2 != end2; ++it2) {
+                c.InsertTerm(
+                    (*it1).coef * (*it2).coef,
+                    (*it1).exp + (*it2).exp
+                );
             }
         }
-        return result;
+        return c;
     }
 
-    double evaluate(double x) const {
-        double result = 0;
-        for (auto it = terms.begin(); it != terms.end(); ++it) {
-            int exp = it->first;
-            int coef = it->second;
-            result += coef * std::pow(x, exp);
-        }
-        return result;
+    double Evaluate(double x) const {
+        double sum = 0;
+        auto it = poly.Begin();
+        auto end = poly.End();
+        for (; it != end; ++it)
+            sum += (*it).coef * pow(x, (*it).exp);
+        return sum;
     }
 };
+
+istream& operator>>(istream& in, Polynomial& p) {
+    p.poly.Clear();
+
+    string line;
+    getline(in >> ws, line);
+    stringstream ss(line);
+
+    int coef, exp;
+    while (ss >> coef >> exp) {
+        p.InsertTerm(coef, exp);
+    }
+    return in;
+}
+
+ostream& operator<<(ostream& out, const Polynomial& p) {
+    auto it = p.poly.Begin();
+    auto end = p.poly.End();
+    bool first = true;
+
+    for (; it != end; ++it) {
+        int c = (*it).coef;
+        int e = (*it).exp;
+
+        if (!first) {
+            if (c > 0) out << " + ";
+            else out << " - ";
+        } else if (c < 0) {
+            out << "-";
+        }
+
+        int abs_c = abs(c);
+
+        if (e == 0)
+            out << abs_c;
+        else if (e == 1)
+            out << abs_c << "x";
+        else
+            out << abs_c << "x^" << e;
+
+        first = false;
+    }
+    if (first) out << "0";
+    return out;
+}
+
 
 int main() {
     Polynomial p1, p2, result;
     double x;
 
-    cout << "insert p: ";
+    cout << "Insert p (coef exp ...): ";
     cin >> p1;
-    cout << "insert q: ";
+    cout << "Insert q (coef exp ...): ";
     cin >> p2;
 
     cout << "p(x) = " << p1 << endl;
@@ -113,18 +275,18 @@ int main() {
     cout << "p + q = " << result << endl;
 
     result = p1 - p2;
-    cout << "p - q =" << result << endl;
+    cout << "p - q = " << result << endl;
 
     result = p1 * p2;
-    cout << "p * q =" << result << endl;
+    cout << "p * q = " << result << endl;
 
-    cout << "insert x for p";
+    cout << "Insert x for p: ";
     cin >> x;
-    cout << "if x=" << x << "result of p = " << p1.evaluate(x) << endl;
+    cout << "p(" << x << ") = " << p1.Evaluate(x) << endl;
 
-    cout << "insert x for q";
+    cout << "Insert x for q: ";
     cin >> x;
-    cout << "if x=" << x << "result of q = " << p2.evaluate(x) << endl;
+    cout << "q(" << x << ") = " << p2.Evaluate(x) << endl;
 
     return 0;
 }
